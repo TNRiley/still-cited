@@ -1,0 +1,95 @@
+<script>
+/* apply the reader's saved theme before first paint, so the page never flashes the other one */
+try{ const t=JSON.parse(localStorage.getItem("stillcited.theme")||'"auto"');
+     if(t==="light"||t==="dark") document.documentElement.setAttribute("data-theme",t); }catch(e){}
+</script>
+<div class="app">
+
+<header class="mast">
+  <div>
+    <div class="lbl">Retraction Watch &times; OpenAlex &middot; 72,389 notices, joined by DOI</div>
+    <h1 class="t">Still <em>Cited</em></h1>
+  </div>
+  <p class="dek">Retracting a paper removes it from the record of what is known. It does not remove it from the literature. This is every retraction notice Retraction Watch has catalogued, joined to the citation history of each paper &mdash; so you can watch what happened <b>after</b> the withdrawal.</p>
+  <div class="mastbtns">
+    <button id="plainBtn" aria-pressed="false">Plain English: off</button>
+    <button id="resetBtn">Reset filters</button>
+    <div class="seg3" id="themeSeg">
+      <button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button>
+    </div>
+  </div>
+</header>
+
+<div class="strip" id="strip"></div>
+
+<div class="bench">
+  <div class="pane" id="rail">
+    <h3>Search titles &amp; journals</h3>
+    <input class="srch" id="q" type="search" placeholder="e.g. hydroxychloroquine, Hindawi&hellip;" autocomplete="off">
+    <h3>Retraction year</h3>
+    <canvas id="yearHist"></canvas>
+    <div class="yrrange"><span id="y0">&mdash;</span><span id="y1">&mdash;</span></div>
+    <p class="pe">Drag across the bars to narrow to a span of years. The tall bar is 2023.</p>
+    <h3>Notice type</h3>
+    <div class="chips" id="natChips"></div>
+    <h3>Field</h3>
+    <div class="chips" id="topChips"></div>
+    <h3>Afterlife</h3>
+    <label class="toggle"><input type="checkbox" id="onlyPost"> <span>Only papers cited <b>after</b> retraction</span></label>
+    <label class="toggle"><input type="checkbox" id="onlyElig"> <span>Only papers with a full citation window</span></label>
+    <p class="pe">The second box keeps only papers whose whole citation history is visible in the data, which is what the afterlife numbers are computed from.</p>
+  </div>
+
+  <div class="pane field">
+    <canvas id="field"></canvas>
+    <div class="fieldnote">Each mark is one retraction &middot; published &rarr; how long it survived</div>
+    <div class="fieldkey" id="fieldkey"></div>
+    <div id="tip"></div>
+  </div>
+
+  <div class="pane" id="rec">
+    <h3>Current selection</h3>
+    <div class="cohort" id="cohort"></div>
+    <h3>Record</h3>
+    <div id="recBody"><p class="empty">Click any mark in the field to open the paper behind it &mdash; title, journal, every reason given, and a link to the DOI.</p></div>
+  </div>
+</div>
+
+<div class="facets" id="facets"></div>
+
+<section class="blk">
+  <h2 class="sec">The afterlife</h2>
+  <p class="sublede">Citations to a retracted paper, counted by year relative to the year it was retracted. The chart follows whatever you have filtered on the bench above.</p>
+  <div class="two">
+    <canvas id="after"></canvas>
+    <div class="finding">
+      <div class="hl" id="afterHl">&mdash;</div>
+      <p id="afterBody">&mdash;</p>
+      <p class="pe">Year 0 is the year the retraction notice appeared. Anything to the right of it is a citation to a paper that had already been withdrawn.</p>
+      <p id="afterCaveat" style="font-size:13px;color:var(--ink3);margin-top:14px"></p>
+    </div>
+  </div>
+</section>
+
+<section class="blk">
+  <h2 class="sec">The two lists disagree</h2>
+  <p class="sublede">Retraction Watch catalogues retraction <em>notices</em>, by hand. OpenAlex carries a <code style="font-family:'IBM Plex Mono',monospace;font-size:13px">is_retracted</code> flag drawn from publisher metadata. They overlap, and they diverge &mdash; which matters if you are building a screening step that trusts either one alone.</p>
+  <div class="two" style="grid-template-columns:1fr">
+    <div class="scroller" style="margin-top:14px">
+      <table id="oaTable"></table>
+    </div>
+  </div>
+  <p class="pe" style="margin-top:10px">These are the most-cited papers that one source flags and the other does not list. Some are plainly retracted and simply absent from the hand-curated list; at least one looks like a bad flag. Neither source is wrong so much as differently scoped.</p>
+</section>
+
+<section class="blk">
+  <h2 class="sec">How this was made</h2>
+  <p class="sublede">Sources, the joins, the choices, and where these numbers should not be pushed.</p>
+  <details class="methods" open>
+    <summary>Methods, sources &amp; limitations</summary>
+    <div class="mbody" id="mbody"></div>
+  </details>
+</section>
+
+<footer id="foot"></footer>
+</div>

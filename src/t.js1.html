@@ -1,0 +1,196 @@
+<script>
+"use strict";
+const D = __PAYLOAD__;
+const N = D.n, OFFW = D.offw, OFFB = D.offBase;   // offset vector: retraction year −4 … +6
+const store = {
+  get(k,d){ try{ const v=localStorage.getItem("stillcited."+k); return v===null?d:JSON.parse(v);}catch(e){return d;} },
+  set(k,v){ try{ localStorage.setItem("stillcited."+k, JSON.stringify(v)); }catch(e){} }
+};
+function dec(k, T){
+  const b=atob(D.a[k]), n=b.length, u=new Uint8Array(n);
+  for(let i=0;i<n;i++) u[i]=b.charCodeAt(i);
+  return new T(u.buffer);
+}
+const pubM=dec("pubM",Int16Array), retM=dec("retM",Int16Array), nature=dec("nature",Uint8Array),
+      subjTop=dec("subjTop",Uint8Array), ctry=dec("ctry",Uint8Array), flags=dec("flags",Uint8Array),
+      jour=dec("jour",Uint16Array), pubr=dec("pubr",Uint16Array), rmask=dec("rmask",Uint16Array),
+      cites=dec("cites",Uint16Array), post=dec("post",Uint16Array), off=dec("off",Uint8Array),
+      rIdx=dec("rIdx",Uint8Array), rCnt=dec("rCnt",Uint8Array),
+      sIdx=dec("sIdx",Uint8Array), sCnt=dec("sCnt",Uint8Array);
+const TITLES=D.titles.split("\n"), DOIS=D.dois.split("\n");
+const rOff=new Uint32Array(N+1), sOff=new Uint32Array(N+1);
+for(let i=0;i<N;i++){ rOff[i+1]=rOff[i]+rCnt[i]; sOff[i+1]=sOff[i]+sCnt[i]; }
+const yearOf = m => m<0 ? -1 : 1900 + Math.floor(m/12);
+const lagYr  = i => (pubM[i]<0||retM[i]<0) ? -1 : (retM[i]-pubM[i])/12;
+const fmt = n => n.toLocaleString("en-US");
+const pct = (a,b) => b ? (100*a/b).toFixed(a/b<0.1?1:0)+"%" : "—";
+
+/* ---------------- filter state ---------------- */
+const F = {
+  y0:1990, y1:2026, yAll:true, q:"", onlyPost:false, onlyElig:false,
+  nat:new Set(), top:new Set(), bucket:new Set(), jour:new Set(), pubr:new Set(), ctry:new Set()
+};
+const sel = new Uint8Array(N);
+let selCount=0, selIdx=[];
+let qHits=null;   // Uint8Array or null
+
+function runSearch(){
+  const q=F.q.trim().toLowerCase();
+  if(!q){ qHits=null; return; }
+  qHits=new Uint8Array(N);
+  const J=D.journals.map(s=>s.toLowerCase()), P=D.publishers.map(s=>s.toLowerCase());
+  const jm=new Uint8Array(J.length), pm=new Uint8Array(P.length);
+  for(let k=0;k<J.length;k++) if(J[k].indexOf(q)>=0) jm[k]=1;
+  for(let k=0;k<P.length;k++) if(P[k].indexOf(q)>=0) pm[k]=1;
+  for(let i=0;i<N;i++)
+    if(jm[jour[i]] || pm[pubr[i]] || TITLES[i].toLowerCase().indexOf(q)>=0) qHits[i]=1;
+}
+function applyFilters(){
+  const useNat=F.nat.size, useTop=F.top.size, useB=F.bucket.size,
+        useJ=F.jour.size, useP=F.pubr.size, useC=F.ctry.size;
+  selCount=0; selIdx.length=0;
+  for(let i=0;i<N;i++){
+    sel[i]=0;
+    if(!F.yAll){ const ry=yearOf(retM[i]); if(ry<F.y0||ry>F.y1) continue; }
+    if(qHits && !qHits[i]) continue;
+    if(F.onlyElig && !(flags[i]&2)) continue;
+    if(F.onlyPost && post[i]===0) continue;
+    if(useNat && !F.nat.has(nature[i])) continue;
+    if(useJ && !F.jour.has(jour[i])) continue;
+    if(useP && !F.pubr.has(pubr[i])) continue;
+    if(useC && !F.ctry.has(ctry[i])) continue;
+    if(useB){ let m=0; for(const b of F.bucket) if(rmask[i]>>b&1){m=1;break;} if(!m) continue; }
+    if(useTop){ let m=0; for(const t of F.top) if(subjTop[i]>>t&1){m=1;break;} if(!m) continue; }
+    sel[i]=1; selCount++; selIdx.push(i);
+  }
+}
+
+/* ---------------- theme helpers ---------------- */
+const cssv = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function rgba(varName, a){
+  const c=cssv(varName);
+  if(c.startsWith("#")){
+    const h=c.slice(1), n=parseInt(h.length===3?h.split("").map(x=>x+x).join(""):h,16);
+    return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+  }
+  return c;
+}
+function fitCanvas(cv){
+  const r=cv.getBoundingClientRect(), dpr=Math.min(2,window.devicePixelRatio||1);
+  cv.width=Math.max(1,Math.round(r.width*dpr)); cv.height=Math.max(1,Math.round(r.height*dpr));
+  const g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0);
+  return {g, w:r.width, h:r.height};
+}
+
+/* ---------------- the field ---------------- */
+const fieldCv=document.getElementById("field"), tip=document.getElementById("tip");
+const FX0=1980, FX1=2027, FY0=Math.log10(0.04), FY1=Math.log10(90);
+let fieldGeom=null;
+const PAD={l:50,r:16,t:34,b:28};
+function drawField(){
+  const {g,w,h}=fitCanvas(fieldCv);
+  fieldGeom={w,h};
+  g.clearRect(0,0,w,h);
+  const pw=w-PAD.l-PAD.r, ph=h-PAD.t-PAD.b;
+  const X=y=>PAD.l+(y-FX0)/(FX1-FX0)*pw;
+  const Y=l=>PAD.t+(FY1-Math.log10(Math.max(0.04,l)))/(FY1-FY0)*ph;
+  g.font='500 10px "IBM Plex Mono", monospace'; g.textBaseline="middle";
+
+  const ticks=[[1/12,"1 month"],[0.5,"6 months"],[1,"1 year"],[2,"2 yr"],[5,"5 yr"],[10,"10 yr"],[25,"25 yr"],[60,"60 yr"]];
+  g.strokeStyle=cssv("--grid"); g.lineWidth=1;
+  for(const [l,lab] of ticks){
+    const y=Math.round(Y(l))+.5;
+    g.beginPath(); g.moveTo(PAD.l,y); g.lineTo(w-PAD.r,y); g.stroke();
+    g.fillStyle=cssv("--ink3"); g.textAlign="right"; g.fillText(lab,PAD.l-7,y);
+  }
+  g.textAlign="center";
+  for(let yr=1980;yr<=2025;yr+=5){
+    const x=Math.round(X(yr))+.5;
+    g.strokeStyle=cssv("--grid"); g.beginPath(); g.moveTo(x,PAD.t); g.lineTo(x,h-PAD.b); g.stroke();
+    g.fillStyle=cssv("--ink3"); g.fillText(yr,x,h-PAD.b+11);
+  }
+  g.textAlign="left"; g.fillStyle=cssv("--ink3");
+  g.fillText("published →", PAD.l, h-PAD.b+11);
+
+  // every record, faint; then the current selection, stamped
+  const dim=rgba("--ink3",0.045), hot=rgba("--stamp",0.30);
+  g.fillStyle=dim;
+  for(let i=0;i<N;i++){
+    if(sel[i]) continue;
+    const l=lagYr(i); if(l<0) continue;
+    g.fillRect(X(Math.max(FX0,yearOf(pubM[i])+(pubM[i]%12)/12))-.7, Y(l)-.7, 1.5,1.5);
+  }
+  g.fillStyle=hot;
+  for(const i of selIdx){
+    const l=lagYr(i); if(l<0) continue;
+    g.fillRect(X(Math.max(FX0,yearOf(pubM[i])+(pubM[i]%12)/12))-.8, Y(l)-.8, 1.7,1.7);
+  }
+
+  // Median survival by year of publication. Stops at CURT: a paper published in 2023
+  // cannot yet have taken ten years to be retracted, so the recent end of this curve is
+  // right-censored and would slope down for reasons that have nothing to do with journals.
+  const CURT=2018, MINBIN=150;
+  const bins=new Map();
+  for(const i of selIdx){
+    const l=lagYr(i); if(l<0) continue;
+    const y=yearOf(pubM[i]); if(y<FX0||y>CURT) continue;
+    (bins.get(y)||bins.set(y,[]).get(y)).push(l);
+  }
+  const pts=[...bins.entries()].filter(([,a])=>a.length>=MINBIN).sort((a,b)=>a[0]-b[0])
+    .map(([y,a])=>{ a.sort((p,q)=>p-q); return [y,a[a.length>>1]]; });
+  if(pts.length>3){
+    g.strokeStyle=cssv("--teal"); g.lineWidth=1.6; g.lineJoin="round"; g.beginPath();
+    pts.forEach((p,k)=>{ const x=X(p[0]+.5), y=Y(p[1]); k?g.lineTo(x,y):g.moveTo(x,y); });
+    g.stroke(); g.lineWidth=1;
+    const last=pts[pts.length-1];
+    g.fillStyle=cssv("--teal"); g.textAlign="left"; g.textBaseline="bottom";
+    g.fillText("median survival", X(last[0]+.5)+5, Y(last[1])-3);
+    g.textBaseline="middle";
+  }
+  // the censoring edge: nothing can be retracted in the future
+  g.strokeStyle=rgba("--ink3",.35); g.setLineDash([3,4]); g.beginPath();
+  for(let yr=FX0;yr<=2026;yr+=0.5){
+    const l=2026.7-yr; if(l<=0.04) break;
+    const x=X(yr), y=Y(l); yr===FX0?g.moveTo(x,y):g.lineTo(x,y);
+  }
+  g.stroke(); g.setLineDash([]);
+  document.getElementById("fieldkey").innerHTML =
+    `<div><i style="background:var(--stamp)"></i>${fmt(selCount)} in selection</div>` +
+    `<div><i style="background:var(--ink3);opacity:.5"></i>${fmt(N-selCount)} filtered out</div>` +
+    (pts.length>2?`<div><i style="background:var(--teal);border-radius:0;height:3px"></i>median survival</div>`:"");
+  fieldGeom.X=X; fieldGeom.Y=Y;
+}
+function nearest(mx,my){
+  if(!fieldGeom) return -1;
+  const {X,Y}=fieldGeom; let best=-1, bd=169;
+  for(const i of selIdx){
+    const l=lagYr(i); if(l<0) continue;
+    const dx=X(Math.max(FX0,yearOf(pubM[i])+(pubM[i]%12)/12))-mx, dy=Y(l)-my;
+    const d=dx*dx+dy*dy;
+    if(d<bd){ bd=d; best=i; }
+  }
+  return best;
+}
+
+/* ---------------- retraction-year histogram ---------------- */
+const HY0=1990, HY1=2026;
+const histCv=document.getElementById("yearHist");
+const histCounts=new Uint32Array(HY1-HY0+1);
+for(let i=0;i<N;i++){ const y=yearOf(retM[i]); if(y>=HY0&&y<=HY1) histCounts[y-HY0]++; }
+function drawHist(){
+  const {g,w,h}=fitCanvas(histCv);
+  g.clearRect(0,0,w,h);
+  const n=histCounts.length, bw=w/n, mx=Math.max(...histCounts);
+  for(let k=0;k<n;k++){
+    const y=HY0+k, inR=F.yAll || (y>=F.y0&&y<=F.y1);
+    const bh=Math.max(1,histCounts[k]/mx*(h-14));
+    g.fillStyle= inR ? cssv("--stamp") : rgba("--ink3",.28);
+    g.fillRect(k*bw+.5, h-12-bh, Math.max(1,bw-1), bh);
+  }
+  g.font='500 9.5px "IBM Plex Mono", monospace'; g.fillStyle=cssv("--ink3");
+  g.textAlign="left"; g.fillText(HY0, 0, h-3);
+  g.textAlign="right"; g.fillText(HY1, w, h-3);
+  document.getElementById("y0").textContent=F.yAll?"all years":F.y0;
+  document.getElementById("y1").textContent=F.yAll?fmt(N)+" notices":F.y1;
+}
+</script>

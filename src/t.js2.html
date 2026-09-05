@@ -1,0 +1,289 @@
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const el = (t,c,h) => { const e=document.createElement(t); if(c)e.className=c; if(h!=null)e.innerHTML=h; return e; };
+const MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const mdate = m => m<0 ? "date not recorded" : MONTHS[m%12]+" "+(1900+Math.floor(m/12));
+const lagText = l => { if(l<0) return "—";
+  if(l<1){ const m=Math.max(1,Math.round(l*12)); return m+(m===1?" month":" months"); }
+  return l.toFixed(1)+" years"; };
+
+/* corpus-wide constants for the masthead strip */
+const ELIG=[]; for(let i=0;i<N;i++) if(flags[i]&2) ELIG.push(i);
+const ELIG_ANY = ELIG.reduce((a,i)=>a+(post[i]>0?1:0),0);
+const ELIG_POST = ELIG.reduce((a,i)=>a+post[i],0);
+const ELIG_ALL  = ELIG.reduce((a,i)=>a+cites[i],0);
+const LAG_MED = (()=>{ const a=[]; for(let i=0;i<N;i++){const l=lagYr(i); if(l>=0)a.push(l);} a.sort((x,y)=>x-y); return a[a.length>>1]; })();
+
+$("strip").innerHTML = [
+  [fmt(N), "retraction notices catalogued by Retraction Watch, 1756–2026", ""],
+  [lagText(LAG_MED), "median time a paper survives between publication and retraction", ""],
+  [pct(ELIG_ANY, ELIG.length), "of measurable papers were cited <b>again after</b> the year they were retracted", "hot"],
+  [fmt(ELIG_POST), "citations to papers that had already been withdrawn", "hot"],
+  [fmt(D.counts.oaFlagged - D.counts.matched), "works OpenAlex flags as retracted that this catalogue does not list", ""]
+].map(([v,k,c])=>`<div><div class="v ${c}">${v}</div><div class="k">${k}</div></div>`).join("");
+
+/* ---------------- facets ---------------- */
+const FACETS = [
+  {key:"bucket", title:"Why it was retracted", names:D.buckets, count(c){ for(const i of selIdx){ const m=rmask[i]; for(let b=0;b<D.buckets.length;b++) if(m>>b&1) c[b]=(c[b]||0)+1; } }},
+  {key:"jour",   title:"Journal",   names:D.journals,   count(c){ for(const i of selIdx) c[jour[i]]=(c[jour[i]]||0)+1; }},
+  {key:"pubr",   title:"Publisher", names:D.publishers, count(c){ for(const i of selIdx) c[pubr[i]]=(c[pubr[i]]||0)+1; }},
+  {key:"ctry",   title:"Country of the authors", names:D.countries, count(c){ for(const i of selIdx) c[ctry[i]]=(c[ctry[i]]||0)+1; }}
+];
+function renderFacets(){
+  $("facets").innerHTML="";
+  for(const f of FACETS){
+    const pane=el("div","pane"); pane.appendChild(el("h3",null,f.title));
+    const c={}; f.count(c);
+    const rows=Object.entries(c).map(([k,v])=>[+k,v]).sort((a,b)=>b[1]-a[1]).slice(0,12);
+    const mx=rows.length?rows[0][1]:1;
+    for(const [k,v] of rows){
+      const on=F[f.key].has(k);
+      const b=el("button","fbar");
+      b.setAttribute("aria-pressed", on);
+      b.innerHTML=`<span class="fb-bg" style="width:${Math.max(3,100*v/mx).toFixed(1)}%"></span>`+
+        `<span class="fb-in"><span class="fb-n">${f.names[k]||"Unrecorded"}</span><span class="fb-c">${fmt(v)}</span></span>`;
+      b.onclick=()=>{ F[f.key].has(k)?F[f.key].delete(k):F[f.key].add(k); refresh(); };
+      pane.appendChild(b);
+    }
+    if(!rows.length) pane.appendChild(el("p","empty","No records match."));
+    $("facets").appendChild(pane);
+  }
+}
+
+/* ---------------- cohort + record ---------------- */
+function renderCohort(){
+  const lags=[]; let eN=0, eAny=0, ePost=0, eAll=0;
+  for(const i of selIdx){
+    const l=lagYr(i); if(l>=0) lags.push(l);
+    if(flags[i]&2){ eN++; if(post[i]>0) eAny++; ePost+=post[i]; eAll+=cites[i]; }
+  }
+  lags.sort((a,b)=>a-b);
+  const row=(k,v)=>`<div class="row"><span>${k}</span><span>${v}</span></div>`;
+  $("cohort").innerHTML =
+    row("Records", fmt(selCount)+" <span style='color:var(--ink3);font-weight:400'>/ "+fmt(N)+"</span>") +
+    row("Median survival", lags.length?lagText(lags[lags.length>>1]):"—") +
+    row("Measurable afterlife", fmt(eN)) +
+    row("Cited after retraction", eN?`<span style="color:var(--stamp)">${pct(eAny,eN)}</span>`:"—") +
+    row("Citations after retraction", eN?`<span style="color:var(--stamp)">${fmt(ePost)}</span>`:"—");
+}
+let picked=-1;
+function renderRecord(){
+  if(picked<0){ $("recBody").innerHTML='<p class="empty">Click any mark in the field to open the paper behind it — title, journal, every reason given, and a link to the DOI.</p>'; return; }
+  const i=picked, l=lagYr(i);
+  const rs=[]; for(let k=rOff[i];k<rOff[i+1];k++) rs.push(D.reasons[rIdx[k]]);
+  const ss=[]; for(let k=sOff[i];k<sOff[i+1];k++) ss.push(D.subjects[sIdx[k]]);
+  const doi=DOIS[i];
+  const eligible = flags[i]&2;
+  $("recBody").innerHTML =
+    `<div class="stampline">${D.natures[nature[i]]}</div>` +
+    `<div class="rec-t">${TITLES[i]||"<span style='color:var(--ink3)'>Title not recorded</span>"}</div>` +
+    `<div class="rec-m">` +
+      `<b>${D.journals[jour[i]]}</b><br>${D.publishers[pubr[i]]} · ${D.countries[ctry[i]]}<br>` +
+      `Published <b>${mdate(pubM[i])}</b> · withdrawn <b>${mdate(retM[i])}</b>` +
+      (l>=0?` · stood for <b>${lagText(l)}</b>`:"") +
+    `</div>` +
+    (flags[i]&1
+      ? `<div class="rec-m" style="margin-top:9px;padding-top:9px;border-top:1px solid var(--rule2)">` +
+        `Cited <b>${fmt(cites[i])}</b> times in all` +
+        (post[i]>0 ? ` — <b style="color:var(--stamp)">${fmt(post[i])}</b> of them in the years <i>after</i> it was retracted.` : ` and not once after the retraction year.`) +
+        (eligible?"":` <span style="color:var(--ink3)">Its citation window is only partly visible, so treat the split as a floor.</span>`) +
+        `</div>`
+      : `<div class="rec-m" style="margin-top:9px;padding-top:9px;border-top:1px solid var(--rule2);color:var(--ink3)">No OpenAlex record matched this DOI, so there is no citation history to show.</div>`) +
+    (rs.length?`<div class="rchips">${rs.map(r=>`<span>${r}</span>`).join("")}</div>`:"") +
+    (ss.length?`<div class="rec-m" style="margin-top:9px;color:var(--ink3);font-size:12px">${ss.join(" · ")}</div>`:"") +
+    (doi?`<div style="margin-top:12px"><a class="mono" style="font-size:12px" href="https://doi.org/${doi}" target="_blank" rel="noopener noreferrer">doi.org/${doi} ↗</a></div>`:"");
+}
+
+/* ---------------- the afterlife chart ---------------- */
+function drawAfter(){
+  const cv=$("after"), {g,w,h}=fitCanvas(cv);
+  g.clearRect(0,0,w,h);
+  const sums=new Float64Array(OFFW); let eN=0, ePost=0, eAll=0, eAny=0;
+  for(const i of selIdx){
+    if(!(flags[i]&2)) continue;
+    eN++; ePost+=post[i]; eAll+=cites[i]; if(post[i]>0) eAny++;
+    const b=i*OFFW; for(let k=0;k<OFFW;k++) sums[k]+=off[b+k];
+  }
+  const P={l:52,r:16,t:22,b:34}, pw=w-P.l-P.r, ph=h-P.t-P.b;
+  g.font='500 10px "IBM Plex Mono", monospace';
+  if(!eN){
+    g.fillStyle=cssv("--ink3"); g.textAlign="center"; g.textBaseline="middle";
+    g.fillText("No papers in this selection have a fully observable citation window.", w/2, h/2);
+    $("afterHl").textContent="Nothing measurable here.";
+    $("afterBody").innerHTML="Widen the filters — or untick <em>only papers with a full citation window</em> — to get a measurable set back.";
+    $("afterCaveat").textContent=""; return;
+  }
+  const mean=[...sums].map(s=>s/eN), mx=Math.max(...mean,0.01);
+  const bw=pw/OFFW;
+  g.textBaseline="middle"; g.textAlign="right";
+  for(let t=0;t<=4;t++){
+    const v=mx*t/4, y=Math.round(P.t+ph-v/mx*ph)+.5;
+    g.strokeStyle=cssv("--grid"); g.beginPath(); g.moveTo(P.l,y); g.lineTo(w-P.r,y); g.stroke();
+    g.fillStyle=cssv("--ink3"); g.fillText(v.toFixed(1),P.l-7,y);
+  }
+  // shade the years after the retraction
+  g.fillStyle=rgba("--stamp",0.07);
+  g.fillRect(P.l+(OFFB+1)*bw, P.t, pw-(OFFB+1)*bw, ph);
+  for(let k=0;k<OFFW;k++){
+    const bh=mean[k]/mx*ph, after=k>OFFB;
+    g.fillStyle= k===OFFB ? cssv("--ink3") : after ? cssv("--stamp") : cssv("--teal");
+    g.globalAlpha = k===OFFB ? .45 : .9;
+    g.fillRect(P.l+k*bw+bw*0.16, P.t+ph-bh, bw*0.68, Math.max(0.5,bh));
+    g.globalAlpha=1;
+  }
+  g.strokeStyle=cssv("--stamp"); g.lineWidth=1.5;
+  const x0=Math.round(P.l+(OFFB+1)*bw)+.5;
+  g.beginPath(); g.moveTo(x0,P.t-6); g.lineTo(x0,P.t+ph); g.stroke(); g.lineWidth=1;
+  g.textAlign="center"; g.fillStyle=cssv("--ink3");
+  for(let k=0;k<OFFW;k++){
+    const d=k-OFFB;
+    g.fillText(d===0?"retracted":(d>0?"+"+d:d), P.l+k*bw+bw/2, P.t+ph+12);
+  }
+  g.textAlign="left"; g.fillText("mean citations per paper, per year", P.l, P.t-10);
+  g.textAlign="right"; g.fillStyle=cssv("--stamp"); g.fillText("after →", w-P.r, P.t+ph+26);
+
+  const share=pct(ePost,eAll);
+  $("afterHl").innerHTML = `<b style="color:var(--stamp)">${pct(eAny,eN)}</b> of these papers were cited again after they were retracted.`;
+  $("afterBody").innerHTML =
+    `Across the <b>${fmt(eN)}</b> papers in this selection whose whole citation history is observable, <b>${fmt(ePost)}</b> citations — <b>${share}</b> of everything they ever collected — arrived in a year <i>after</i> the retraction notice appeared. The bars fall after year 0, but they do not fall to nothing.`;
+  $("afterCaveat").innerHTML =
+    `Citations in the retraction year itself are counted as <i>before</i>, since a notice published in December cannot be blamed for a citation in January. That makes every figure here a <b>floor</b>, not a ceiling.`;
+}
+
+/* ---------------- the disagreement table ---------------- */
+$("oaTable").innerHTML =
+  `<thead><tr><th>Flagged retracted by OpenAlex, absent from Retraction Watch</th><th>Journal</th><th class="r">Year</th><th class="r">Citations</th></tr></thead><tbody>` +
+  D.oaOnly.map(r=>`<tr><td><a href="https://doi.org/${r.doi}" target="_blank" rel="noopener noreferrer">${r.title}</a></td>`+
+    `<td style="color:var(--ink2)">${r.venue||"—"}</td><td class="r n">${r.year||"—"}</td><td class="r n">${fmt(r.cites||0)}</td></tr>`).join("") +
+  `</tbody>`;
+
+/* ---------------- methods ---------------- */
+$("mbody").innerHTML = `
+<section class="mblk"><h3>The two sources</h3>
+<ul>
+<li><b>Retraction Watch database</b>, distributed by <b>Crossref</b> (CC0) — <code>https://api.labs.crossref.org/data/retractionwatch</code>. A 66 MB CSV of <b>${fmt(D.counts.rwRows)}</b> notices, hand-curated: title, journal, publisher, country, subject, article type, the date of the original paper, the date of the notice, the nature of the notice, and up to a dozen coded reasons per record.</li>
+<li><b>OpenAlex</b> — <code>api.openalex.org/works?filter=is_retracted:true</code>, cursor-paged to all <b>${fmt(D.counts.oaFlagged)}</b> flagged works, keeping the DOI, publication year, lifetime citation count and the per-year citation history.</li>
+</ul>
+<p>The two were joined on the <b>normalised original-paper DOI</b>. <b>${fmt(D.counts.matched)}</b> records matched. Everything on this page is computed in your browser from that join; nothing is fetched while you read it.</p>
+
+</section><section class="mblk"><h3>What counts as &ldquo;cited after retraction&rdquo;</h3>
+<p>OpenAlex reports citations by calendar year, not by date, so the retraction <i>year</i> is the finest resolution available. A citation is counted as "after" only if it falls in a year <b>strictly later</b> than the year the notice appeared — a paper retracted in December gets the whole of that December credited to its life, not its afterlife. The figures are therefore conservative.</p>
+<p>The per-year citation history only runs from <b>2012</b>. So the afterlife statistics use only papers <b>published in 2012 or later and retracted between 2014 and 2024</b> — <b>${fmt(ELIG.length)}</b> of them — where the full arc is visible. <b>Eligibility depends on the observation window alone, never on whether a paper was actually cited afterwards</b>; a paper cited zero times after retraction qualifies and counts as a zero. Getting that wrong would make the measure select for the behaviour it claims to detect.</p>
+
+</section><section class="mblk"><h3>The reason codes</h3>
+<p>Retraction Watch codes ${D.reasons.length} distinct reasons, several per notice, and they are <b>not mutually exclusive</b> — the facet counts add to more than the number of records. The ${D.buckets.length} groups in "Why it was retracted" are mine, not theirs; the record card always shows the original codes underneath.</p>
+<p>One grouping deserves a warning. <b>"Process / none given"</b> is the largest group and says nothing about wrongdoing: it collects <code>Investigation by Journal/Publisher</code>, <code>Notice - Limited or No Information</code>, and similar procedural codes. It marks how a retraction happened, not why. Read it as an absence of information.</p>
+
+</section><section class="mblk"><h3>Where these numbers should not be pushed</h3>
+<ul>
+<li><b>A citation is not an endorsement.</b> Some post-retraction citations are papers <i>about</i> the retraction, or corrections of the record. Nothing here can separate those from citations that use the withdrawn result as if it stood.</li>
+<li><b>The corpus is not evenly collected.</b> Retraction Watch's coverage has deepened over time, so the rise in notices mixes more retractions with better cataloguing. The 2023 peak is largely one publisher's bulk purge of compromised special issues, not a normal year.</li>
+<li><b>Retraction is not the same as fraud.</b> Expressions of concern, corrections, reinstatements and honest-error withdrawals all sit in this file; the notice-type filter separates them. Retraction Watch even codes a reason called <i>Doing the Right Thing</i>.</li>
+<li><b>The field plots only records with both dates.</b> Notices missing an original-paper date or a retraction date (${fmt(N - (()=>{let c=0;for(let i=0;i<N;i++) if(lagYr(i)>=0)c++;return c;})())} of them) cannot be placed and are not drawn, though they still count in the facets. Papers published before 1980 are clamped to the left edge.</li>
+<li><b>The recent edge of the field is censored.</b> A paper published in 2023 cannot yet have taken ten years to be retracted, so the cloud thins toward the bottom right against a hard diagonal &mdash; the dashed line marks it. The median-survival curve stops at papers published in 2018 for the same reason; drawn any further it would slope downwards for arithmetic rather than editorial reasons, and it is only drawn for years holding at least 150 records.</li>
+<li><b>Country is the country of the authors' institutions</b> as recorded by Retraction Watch, and a paper can carry several; only the first is used here.</li>
+</ul>
+
+</section><section class="mblk"><h3>Built</h3>
+<p>Retrieved ${D.built}. ${fmt(N)} notices, ${fmt(D.journals.length)} journals, ${fmt(D.publishers.length)} publishers, ${D.countries.length} countries. Titles are trimmed to 110 characters and the redundant "RETRACTED:" prefix publishers add has been stripped. Every statistic, facet count and chart on this page is recomputed live from the arrays shipped with it.</p></section>`;
+
+$("foot").innerHTML =
+  `Still Cited · Retraction Watch database via Crossref (CC0) × OpenAlex · ${fmt(N)} notices, ${fmt(D.counts.matched)} joined to a citation history · retrieved ${D.built}<br>` +
+  `Nothing leaves your browser. Not affiliated with Retraction Watch, Crossref or OpenAlex — go to the source before citing any of it.`;
+
+/* ---------------- chips, controls, wiring ---------------- */
+function chips(host, names, set){
+  $(host).innerHTML="";
+  names.forEach((nm,k)=>{
+    const b=el("button",null,nm); b.setAttribute("aria-pressed", set.has(k));
+    b.onclick=()=>{ set.has(k)?set.delete(k):set.add(k); refresh(); };
+    $(host).appendChild(b);
+  });
+}
+let raf=null;
+function refresh(){
+  applyFilters();
+  chips("natChips", D.natures, F.nat);
+  chips("topChips", D.topcodes.map(c=>({"BLS":"Life sciences","B/T":"Business & tech","HSC":"Health","PHY":"Physical","SOC":"Social","ENV":"Environment","HUM":"Humanities"}[c]||c)), F.top);
+  renderFacets(); renderCohort(); renderRecord();
+  if(raf) cancelAnimationFrame(raf);
+  raf=requestAnimationFrame(()=>{ drawField(); drawHist(); drawAfter(); });
+}
+
+let qT=null;
+$("q").oninput = e => { clearTimeout(qT); qT=setTimeout(()=>{ F.q=e.target.value; runSearch(); refresh(); }, 200); };
+$("onlyPost").onchange = e => { F.onlyPost=e.target.checked; refresh(); };
+$("onlyElig").onchange = e => { F.onlyElig=e.target.checked; refresh(); };
+$("resetBtn").onclick = () => {
+  F.y0=HY0; F.y1=HY1; F.yAll=true; F.q=""; F.onlyPost=false; F.onlyElig=false;
+  ["nat","top","bucket","jour","pubr","ctry"].forEach(k=>F[k].clear());
+  $("q").value=""; $("onlyPost").checked=false; $("onlyElig").checked=false;
+  qHits=null; picked=-1; refresh();
+};
+$("plainBtn").onclick = () => {
+  const on=!document.body.classList.contains("plain");
+  document.body.classList.toggle("plain", on); store.set("plain", on);
+  $("plainBtn").setAttribute("aria-pressed", on);
+  $("plainBtn").textContent="Plain English: "+(on?"on":"off");
+};
+if(store.get("plain",false)) $("plainBtn").click();
+
+/* Theme. The host stamps data-theme only when the reader has picked one; left on "system"
+   the page follows the OS, which is not always the theme the reader is looking at Claude in.
+   So the page carries its own switch. */
+function setTheme(t){
+  store.set("theme", t);
+  if(t==="auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", t);
+  [...$("themeSeg").children].forEach(b => b.setAttribute("aria-pressed", b.dataset.t===t));
+}
+[...$("themeSeg").children].forEach(b => b.onclick = () => setTheme(b.dataset.t));
+setTheme(store.get("theme","auto"));
+
+/* year histogram: drag to pick a span */
+let hDrag=null;
+const histYear = e => {
+  const r=$("yearHist").getBoundingClientRect();
+  return Math.max(HY0, Math.min(HY1, HY0 + Math.floor((e.clientX-r.left)/r.width*(HY1-HY0+1))));
+};
+$("yearHist").addEventListener("pointerdown", e => {
+  const y=histYear(e);
+  if(!F.yAll && F.y0===y && F.y1===y){ F.yAll=true; hDrag=null; refresh(); return; }  // click the lone year again to clear
+  hDrag=y; F.yAll=false; F.y0=F.y1=y; $("yearHist").setPointerCapture(e.pointerId); refresh();
+});
+$("yearHist").addEventListener("pointermove", e => {
+  if(hDrag===null) return;
+  const y=histYear(e), a=Math.min(hDrag,y), b=Math.max(hDrag,y);
+  if(!F.yAll && a===F.y0 && b===F.y1) return;
+  F.yAll=false;            // only re-filter when the span actually changes
+  F.y0=a; F.y1=b; refresh();
+});
+$("yearHist").addEventListener("pointerup", ()=>{ hDrag=null; });
+$("yearHist").addEventListener("pointercancel", ()=>{ hDrag=null; });
+
+/* field: hover to preview, click to pin */
+fieldCv.addEventListener("pointermove", e => {
+  const r=fieldCv.getBoundingClientRect(), i=nearest(e.clientX-r.left, e.clientY-r.top);
+  if(i<0){ tip.style.display="none"; return; }
+  tip.style.display="block";
+  tip.innerHTML=`${TITLES[i]||"Title not recorded"}<div class="tj">${D.journals[jour[i]]} · ${mdate(pubM[i])} → ${mdate(retM[i])}${post[i]>0?` · <span style="color:var(--stamp)">${fmt(post[i])} citations after</span>`:""}</div>`;
+  const x=e.clientX-r.left, y=e.clientY-r.top;
+  tip.style.left=Math.min(r.width-345, Math.max(6,x+14))+"px";
+  tip.style.top=Math.max(6, y-14)+"px";
+});
+fieldCv.addEventListener("pointerleave", ()=>{ tip.style.display="none"; });
+fieldCv.addEventListener("click", e => {
+  const r=fieldCv.getBoundingClientRect(), i=nearest(e.clientX-r.left, e.clientY-r.top);
+  if(i>=0){ picked=i; renderRecord(); $("rec").scrollIntoView({behavior:"smooth", block:"nearest"}); }
+});
+
+addEventListener("resize", ()=>{ if(raf) cancelAnimationFrame(raf); raf=requestAnimationFrame(()=>{ drawField(); drawHist(); drawAfter(); }); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", ()=>{ drawField(); drawHist(); drawAfter(); });
+new MutationObserver(()=>{ drawField(); drawHist(); drawAfter(); })
+  .observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});
+
+/* open on the thing worth seeing first */
+picked = (()=>{ let b=-1; for(const i of ELIG) if(post[i] > (b<0?40:post[b])) b=i; return b; })();
+refresh();
+</script>
