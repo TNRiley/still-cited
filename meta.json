@@ -4,7 +4,7 @@
   "favicon": "📄",
   "built": "2026-09-05",
   "tagline": "What the literature did after each paper was withdrawn.",
-  "blurb": "Every retraction Retraction Watch has catalogued — 72,389 notices — joined by DOI to OpenAlex citation histories. A field of 72,000 marks plots each paper's publication date against how long it survived; facets slice by reason, journal, publisher, country and field; any mark opens the paper, its original reason codes and its DOI. Of the 39,030 papers whose full citation history is observable, 69% were cited again after the year they were retracted, and 34% of every citation they ever collected arrived after the notice.",
+  "blurb": "Every retraction Retraction Watch has catalogued, 72,389 notices, joined by DOI to OpenAlex citation histories. A field of 72,000 marks plots each paper's publication date against how long it survived; facets slice by reason, journal, publisher, country and field; any mark opens the paper, its original reason codes and its DOI. Of the 39,030 papers whose full citation history is observable, 69% were cited again after the year they were retracted, and 34% of every citation they ever collected arrived after the notice.",
   "tags": [
     "research integrity",
     "bibliometrics",
